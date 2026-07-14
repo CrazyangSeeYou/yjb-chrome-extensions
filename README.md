@@ -15,6 +15,7 @@
 - 根据持仓和公开估值接口计算当日收益。
 - 支持浏览器角标显示当日收益或收益率。
 - 支持基金搜索、添加持仓、删除持仓。
+- 点击基金弹出详情浮层，查看净值估算走势与历史净值走势。
 
 ## 截图
 
@@ -46,6 +47,17 @@
 | --- | --- | --- | --- |
 | 天天基金估值 | GET | `https://fundgz.1234567.com.cn/js/{code}.js?rt={timestamp}` | 优先获取基金实时估值 |
 | 东方财富基金接口 | GET | `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?...&Fcodes={codes}` | 批量补充缺失估值和净值 |
+| 天天基金分钟估值 | GET | `https://fundcomapi.tiantianfunds.com/mm/newCore/FundVarietieValuationDetail?FCODE={code}` | 详情浮层的分钟级估值走势 |
+| 东方财富历史净值 | GET | `https://fundmobapi.eastmoney.com/FundMApi/FundNetDiagram.ashx?FCODE={code}&RANGE={range}` | 详情浮层的历史净值走势 |
+| 东方财富行情走势 | GET | `https://push2delay.eastmoney.com/api/qt/stock/trends2/get?secid={secid}` | 联接ETF/跟踪指数/持仓推导估值曲线 |
+| 新浪估值 | GET | `https://hq.sinajs.cn/list=fu_{code}` | fundgz 无估值时的实时估值兜底 |
+
+## 基金详情浮层
+
+在持仓列表或搜索列表点击任意基金，弹出详情浮层，包含两个标签页：
+
+- **历史净值（默认）**：展示单位净值走势，Y 轴以发行值为基准换算为涨跌幅百分比（净值 1.1 显示 +10%，0.9 显示 -10%），支持 1 月 / 3 月 / 1 年 / 3 年 / 创建以来时间范围，默认打开 1 年。
+- **净值估算**：按优先级降级取数——分钟估值明细 → 联接 ETF / 跟踪指数 / 持仓行情推导曲线 → 实时估值快照采样。若所有分钟级接口均无数据，则用实时采集的当日涨跌幅按相同的百分比走势图渲染，并每 8 秒轮询累计采样点。
 
 ### 插件权限对应的域名
 
@@ -57,9 +69,15 @@ http://yjbplugin-test.52guihua.cn/*
 http://browser-plug-api.yangjibao.com/*
 https://fundgz.1234567.com.cn/*
 https://fundmobapi.eastmoney.com/*
+https://api.fund.eastmoney.com/*
+https://fundcomapi.tiantianfunds.com/*
+https://push2his.eastmoney.com/*
+https://push2delay.eastmoney.com/*
+https://searchapi.eastmoney.com/*
+https://hq.sinajs.cn/*
 ```
 
-其中 `browser-plug-api.yangjibao.com` 是正式后端接口；`fundgz.1234567.com.cn` 和 `fundmobapi.eastmoney.com` 用于基金估值补充。
+其中 `browser-plug-api.yangjibao.com` 是正式后端接口；其余域名用于基金估值、历史净值、行情走势与搜索等数据补充，供详情浮层与收益计算使用。
 
 ## 关于第三方平台名称
 

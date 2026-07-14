@@ -19,12 +19,27 @@
     "content_security_policy": {
         "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     },
-    "permissions": ["storage", "alarms"],
+    "permissions": ["storage", "alarms", "declarativeNetRequestWithHostAccess"],
     "host_permissions": [
         "http://192.168.101.181:8010/yjb_plugin/*",
         "http://yjbplugin-test.52guihua.cn/*",
         "http://browser-plug-api.yangjibao.com/*",
         "https://fundgz.1234567.com.cn/*",
-        "https://fundmobapi.eastmoney.com/*"
-    ]
+        "https://fundmobapi.eastmoney.com/*",
+        "https://api.fund.eastmoney.com/*",
+        "https://fundcomapi.tiantianfunds.com/*",
+        "https://push2his.eastmoney.com/*",
+        "https://push2delay.eastmoney.com/*",
+        "https://searchapi.eastmoney.com/*",
+        "https://hq.sinajs.cn/*"
+    ],
+    "declarative_net_request": {
+        "rule_resources": [
+            {
+                "id": "sina_estimate_headers",
+                "enabled": true,
+                "path": "rules/sina-estimate.json"
+            }
+        ]
+    }
 }
