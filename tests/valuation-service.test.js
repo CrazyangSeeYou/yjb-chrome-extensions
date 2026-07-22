@@ -45,4 +45,31 @@ assert.equal(service.getSecurityId("688001", 1, false), "1.688001");
 assert.equal(service.getSecurityId("300001", 0, false), "0.300001");
 assert.equal(service.getSecurityId("513050", "", true), "1.513050");
 
+var snapshots = service.collectValuationResults(
+    ["000001", "006327"],
+    { "000001": estimate },
+    {
+        "000001": { dwjz: "2.0000", jzrq: "2026-07-21", rzzl: "0.5000" },
+        "006327": { dwjz: "0.9011", jzrq: "2026-07-20", rzzl: "3.1500" }
+    },
+    true
+);
+
+assert.equal(snapshots["000001"].gsz, "2.0250");
+assert.deepEqual(snapshots["006327"], {
+    dwjz: "0.9011",
+    jzrq: "2026-07-20",
+    rzzl: "3.1500",
+    source: "latest-nav"
+});
+assert.deepEqual(
+    service.collectValuationResults(
+        ["006327"],
+        {},
+        { "006327": { dwjz: "0.9011", jzrq: "2026-07-20" } },
+        false
+    ),
+    {}
+);
+
 console.log("valuation-service tests passed");

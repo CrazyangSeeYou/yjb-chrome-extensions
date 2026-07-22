@@ -259,7 +259,7 @@
   }
 
   function getFundCode(fund) {
-    var value = fund && (fund.fund_id || fund.code || fund.fund_code);
+    var value = fund && (fund.code || fund.fund_code || fund.fund_id);
     var code = String(value === undefined || value === null ? "" : value).trim();
     return /^\d{1,6}$/.test(code) ? code.padStart(6, "0") : "";
   }
@@ -278,13 +278,17 @@
 
   async function enrichFundsWithValuations(funds) {
     if (!Array.isArray(funds) || !funds.length) return funds;
-    if (typeof self.__fetchAllValuations !== "function") return funds;
+    var fetchSnapshots =
+      typeof self.__fetchAllFundSnapshots === "function"
+        ? self.__fetchAllFundSnapshots
+        : self.__fetchAllValuations;
+    if (typeof fetchSnapshots !== "function") return funds;
 
     var codes = funds.map(getFundCode).filter(Boolean);
     if (!codes.length) return funds;
 
     try {
-      var valuations = await self.__fetchAllValuations(codes);
+      var valuations = await fetchSnapshots(codes);
       funds.forEach(function (fund) {
         var code = getFundCode(fund);
         var valuation = code && valuations && valuations[code];
@@ -297,6 +301,7 @@
         fillValuationValue(info, "gszzl", valuation.gszzl);
         fillValuationValue(info, "dwjz", valuation.dwjz);
         fillValuationValue(info, "jzrq", valuation.jzrq);
+        fillValuationValue(info, "rzzl", valuation.rzzl);
         fillValuationValue(info, "gztime", valuation.gztime);
         fillValuationValue(info, "qjgzrq", valuation.gztime);
         fillValuationValue(info, "zxjzrq", valuation.jzrq);

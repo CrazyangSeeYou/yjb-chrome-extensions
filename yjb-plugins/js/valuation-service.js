@@ -140,11 +140,14 @@
                 if (!Array.isArray(rows)) return;
                 rows.forEach(function (row) {
                     var nav = parseFloat(row && row.NAV);
+                    var rate = parseFloat(row && row.NAVCHGRT);
                     if (!row || !row.FCODE || !(nav > 0)) return;
-                    navs[row.FCODE] = {
+                    var latest = {
                         dwjz: nav.toFixed(4),
                         jzrq: row.PDATE || ""
                     };
+                    if (Number.isFinite(rate)) latest.rzzl = rate.toFixed(4);
+                    navs[row.FCODE] = latest;
                 });
             });
             return { navs: navs, marketDate: marketDate };
@@ -440,10 +443,32 @@
         return estimates;
     }
 
-    function fetchAllValuations(codes) {
+    function collectValuationResults(codes, estimates, navs, includeNavOnly) {
+        var result = {};
+        codes.forEach(function (code) {
+            var estimate = estimates[code];
+            if (estimate && parseFloat(estimate.gsz) > 0 &&
+                Number.isFinite(parseFloat(estimate.gszzl)) && estimate.gztime) {
+                result[code] = estimate;
+                return;
+            }
+            if (!includeNavOnly || !navs[code]) return;
+            var snapshot = {
+                dwjz: navs[code].dwjz,
+                jzrq: navs[code].jzrq,
+                source: "latest-nav"
+            };
+            if (navs[code].rzzl !== undefined) snapshot.rzzl = navs[code].rzzl;
+            result[code] = snapshot;
+        });
+        return normalizeSessionTimes(result);
+    }
+
+    function fetchAllValuations(codes, includeNavOnly) {
         var normalized = normalizeCodes(codes);
         if (!normalized.length) return Promise.resolve({});
-        var cacheKey = normalized.slice().sort().join(",");
+        var cacheKey = (includeNavOnly ? "snapshot:" : "valuation:") +
+            normalized.slice().sort().join(",");
         var cached = resultCache[cacheKey];
         if (cached && cached.expires > Date.now()) return cached.promise;
 
@@ -458,6 +483,7 @@
                 if (nav) {
                     estimates[code].dwjz = nav.dwjz;
                     estimates[code].jzrq = nav.jzrq;
+                    estimates[code].rzzl = nav.rzzl;
                 }
             });
 
@@ -470,14 +496,7 @@
                     if (derived) estimates[code] = derived;
                 });
             }).then(function () {
-                var valid = {};
-                Object.keys(estimates).forEach(function (code) {
-                    var item = estimates[code];
-                    if (parseFloat(item.gsz) > 0 && Number.isFinite(parseFloat(item.gszzl)) && item.gztime) {
-                        valid[code] = item;
-                    }
-                });
-                return normalizeSessionTimes(valid);
+                return collectValuationResults(normalized, estimates, navs, includeNavOnly);
             });
         }).catch(function () { return {}; });
 
@@ -486,6 +505,9 @@
     }
 
     global.__fetchAllValuations = fetchAllValuations;
+    global.__fetchAllFundSnapshots = function (codes) {
+        return fetchAllValuations(codes, true);
+    };
     global.__fetchPublicValuation = function (code) {
         var normalized = normalizeCodes([code]);
         if (!normalized.length) return Promise.resolve(null);
@@ -498,6 +520,7 @@
         parseSinaBatch: parseSinaBatch,
         parseQuoteResponse: parseQuoteResponse,
         estimateFromRate: estimateFromRate,
-        getSecurityId: getSecurityId
+        getSecurityId: getSecurityId,
+        collectValuationResults: collectValuationResults
     };
 })(self);

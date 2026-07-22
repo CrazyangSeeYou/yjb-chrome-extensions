@@ -51,6 +51,8 @@ global.__fetchAllValuations = async function (codes) {
   return valuationHandler(codes);
 };
 
+global.__fetchAllFundSnapshots = global.__fetchAllValuations;
+
 require("../yjb-plugins/js/app-api.js");
 
 assert.equal(listeners.length, 1);
@@ -133,7 +135,10 @@ function sendMessage(message) {
     if (call.url.endsWith("position/v1/option/all")) {
       return apiResponse({
         code: 200,
-        data: [{ fund_id: "1", nv_info: { gsz: "9.9999", gszzl: "" } }],
+        data: [
+          { fund_id: "1", code: "000001", nv_info: { gsz: "9.9999", gszzl: "" } },
+          { fund_id: "2", code: "006327", nv_info: {} },
+        ],
       });
     }
     throw new Error("Unexpected URL: " + call.url);
@@ -147,15 +152,22 @@ function sendMessage(message) {
         jzrq: "2026-07-21",
         gztime: "2026-07-22 14:30",
       },
+      "006327": {
+        dwjz: "0.9011",
+        jzrq: "2026-07-20",
+        rzzl: "3.1500",
+        source: "latest-nav",
+      },
     };
   };
   var optionalFunds = await sendMessage({ type: "optionalFunds" });
   assert.equal(optionalFunds.ok, true);
   assert.deepEqual(optionalFunds.data.groups, [{ id: 1, title: "关注" }]);
-  assert.deepEqual(valuationCalls, [["000001"]]);
+  assert.deepEqual(valuationCalls, [["000001", "006327"]]);
   assert.deepEqual(optionalFunds.data.funds, [
     {
       fund_id: "1",
+      code: "000001",
       nv_info: {
         gsz: "9.9999",
         gszzl: "1.26",
@@ -164,6 +176,16 @@ function sendMessage(message) {
         gztime: "2026-07-22 14:30",
         qjgzrq: "2026-07-22 14:30",
         zxjzrq: "2026-07-21",
+      },
+    },
+    {
+      fund_id: "2",
+      code: "006327",
+      nv_info: {
+        dwjz: "0.9011",
+        jzrq: "2026-07-20",
+        rzzl: "3.1500",
+        zxjzrq: "2026-07-20",
       },
     },
   ]);

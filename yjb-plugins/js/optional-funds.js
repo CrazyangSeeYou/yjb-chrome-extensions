@@ -356,7 +356,7 @@
 
   function createFundRow(fund) {
     var info = (fund && fund.nv_info) || {};
-    var code = formatFundCode(fund.fund_id || fund.code || fund.fund_code);
+    var code = formatFundCode(fund.code || fund.fund_code || fund.fund_id);
     var name = String(fund.short_name || fund.fund_name || fund.name || code || "--");
     var valuation = getFirstNumber(info, ["gsz", "zsgz", "dwjz"]);
     var time = getFirstValue(info, ["gztime", "zxjzrq", "jzrq"]);
