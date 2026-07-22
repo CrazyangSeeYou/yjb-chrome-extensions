@@ -24,6 +24,7 @@
         "http://192.168.101.181:8010/yjb_plugin/*",
         "http://yjbplugin-test.52guihua.cn/*",
         "http://browser-plug-api.yangjibao.com/*",
+        "https://app-api.yangjibao.com/*",
         "https://fundmobapi.eastmoney.com/*",
         "https://api.fund.eastmoney.com/*",
         "https://fundcomapi.tiantianfunds.com/*",
