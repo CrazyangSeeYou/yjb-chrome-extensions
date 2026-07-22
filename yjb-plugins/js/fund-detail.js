@@ -7,16 +7,15 @@
  *   1. 天天基金分钟估值明细
  *   2. 基金联接 ETF、跟踪指数或上市基金自身的分钟行情
  *   3. 已披露持仓的分钟行情加权估算
- *   4. fundgz / 新浪当前估值的真实采样
+ *   4. 新浪当前估值的真实采样
  */
 (function () {
   "use strict";
 
   // ====== 配置（全部来自 funds-master 源码） ======
-  // 天天基金：分时估值明细（仍在服务，返回真实分钟级估值涨跌幅曲线）
+  // 天天基金：上游有数据时返回分钟级估值涨跌幅曲线
   var API_INTRADAY =
     "https://fundcomapi.tiantianfunds.com/mm/newCore/FundVarietieValuationDetail?FCODE={code}&deviceid=Wap&plat=Wap&product=EFund&version=2.0.0&_={ts}";
-  var API_ESTIMATE = "https://fundgz.1234567.com.cn/js/{code}.js?rt={ts}";
   var API_SINA_ESTIMATE = "https://hq.sinajs.cn/list=fu_{code}&_={ts}";
   var API_POSITIONS =
     "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition?FCODE={code}&deviceid=Wap&plat=Wap&product=EFund&version=2.0.0&_={ts}";
@@ -132,19 +131,6 @@
     return m && m[1].trim() ? m[1].trim() : "";
   }
 
-  /**
-   * 解析 fundgz JSONP 响应
-   */
-  function parseFundGz(text) {
-    var m = text.match(/jsonpgz\((.*)\)/);
-    if (!m) return null;
-    try {
-      return JSON.parse(m[1]);
-    } catch (e) {
-      return null;
-    }
-  }
-
   function parseSinaEstimate(text, code) {
     var match = String(text || "").match(/hq_str_fu_\d+="([^"]*)"/);
     if (!match || !match[1]) return null;
@@ -178,7 +164,7 @@
     var rate = parseFloat(est && est.gszzl);
     var match = est && String(est.gztime || "").match(/(\d{4}-\d{2}-\d{2}).*?(\d{2}:\d{2})/);
     if (!(gsz > 0) || !(dwjz > 0) || !Number.isFinite(rate) || !match) return null;
-    return { date: match[1], time: match[2], gsz: gsz, dwjz: dwjz, rate: rate, source: est.source || "fundgz" };
+    return { date: match[1], time: match[2], gsz: gsz, dwjz: dwjz, rate: rate, source: est.source || "sina" };
   }
 
   // ====== 数据获取（全部对齐 funds-master 接口） ======
@@ -470,8 +456,8 @@
    * 获取分时估值明细数据（可能返回 null）
    */
   /**
-   * 用 fundgz 当前估值渲染"今日估值"图表
-   * 数据源：fundgz 返回的 dwjz(昨日单位净值) + gsz(当前估算净值) + gszzl(估算涨跌幅) + gztime(估值时间)
+   * 用当前估值快照渲染"今日估值"图表
+   * 数据源：新浪返回的 dwjz(昨日单位净值) + gsz(当前估算净值) + gszzl(估算涨跌幅) + gztime(估值时间)
    * 当分钟明细和资产推导曲线都不可用时，显示当前快照并轮询积累真实采样点。
    */
   var estimatePolling = null;
@@ -860,7 +846,10 @@
         });
         if (activeWeight > 0) {
           times.push(time);
-          rates.push(weightedRate / activeWeight);
+          // JZBL is the percentage of the whole fund NAV. Assets outside the
+          // disclosed holdings are treated as flat instead of scaling the
+          // disclosed positions to 100%, which would exaggerate the estimate.
+          rates.push(weightedRate / 100);
         }
       });
       if (rates.length < 2) return null;
@@ -904,15 +893,7 @@
    * 获取当前估值快照
    */
   function fetchEstimateData(code) {
-    var url = API_ESTIMATE.replace("{code}", code).replace("{ts}", Date.now());
-    return fetch(url).then(function (r) { return r.text(); }).then(function (text) {
-      var estimate = parseFundGz(text);
-      if (estimateSample(estimate)) {
-        estimate.source = "fundgz";
-        return estimate;
-      }
-      return fetchSinaEstimateData(code);
-    }).catch(function () { return fetchSinaEstimateData(code); });
+    return fetchSinaEstimateData(code);
   }
 
   function fetchSinaEstimateData(code) {
@@ -952,6 +933,23 @@
   /**
    * 渲染已归一化的分钟估值走势。
    */
+  function getChartPalette() {
+    var isDark = document.documentElement.dataset.theme === "dark";
+    return isDark ? {
+      axis: "#aeb5c1",
+      grid: "#343942",
+      tooltipBackground: "rgba(36,40,47,.97)",
+      tooltipBorder: "#4a515d",
+      tooltipText: "#eceef2"
+    } : {
+      axis: "#666",
+      grid: "#e0e0e0",
+      tooltipBackground: "rgba(255,255,255,.96)",
+      tooltipBorder: "#ccc",
+      tooltipText: "#333"
+    };
+  }
+
   function renderIntradayChart(containerEl, curve) {
     var echartsLib = getEcharts();
     if (!echartsLib) {
@@ -959,6 +957,7 @@
       return;
     }
 
+    var palette = getChartPalette();
     var DWJZ = parseFloat(curve.dwjz) || 0;
     var axisData = Array.isArray(curve.axisTimes) && curve.axisTimes.length > 1 ? curve.axisTimes.slice() : TIME_DATA;
     var pointMap = {};
@@ -1002,33 +1001,33 @@
       var step = Math.max(1, Math.round((axisData.length - 1) / (targetCount - 1)));
       return idx % step === 0;
     }
-    function axisColor(val) { return val>0?"#f56c6c":val<0?"#4eb61b":"#666"; }
+    function axisColor(val) { return val>0?"#f56c6c":val<0?"#4eb61b":palette.axis; }
 
     chartInstance.setOption({
       title: { text: curve.sourceLabel || "分钟估值",
         left: "center", top: 4,
-        textStyle: { color: "#999", fontSize: 11, fontWeight: "normal" } },
+        textStyle: { color: palette.axis, fontSize: 11, fontWeight: "normal" } },
       tooltip: { trigger:"axis", formatter:tooltipFmt,
-        backgroundColor:"rgba(255,255,255,.96)", borderColor:"#ccc", borderWidth:1, textStyle:{color:"#333",fontSize:12} },
+        backgroundColor:palette.tooltipBackground, borderColor:palette.tooltipBorder, borderWidth:1, textStyle:{color:palette.tooltipText,fontSize:12} },
       grid: { top:35, bottom:34, left:55, right:55 },
       xAxis: { type:"category", data:axisData, position:"bottom", boundaryGap:false,
-        axisLabel:{ interval:fmtVal, fontSize:10, color:"#666", hideOverlap:true, showMinLabel:true, showMaxLabel:true },
-        axisLine:{ onZero:false, lineStyle:{color:"#ccc"} }, axisTick:{ show:false } },
+        axisLabel:{ interval:fmtVal, fontSize:10, color:palette.axis, hideOverlap:true, showMinLabel:true, showMaxLabel:true },
+        axisLine:{ onZero:false, lineStyle:{color:palette.tooltipBorder} }, axisTick:{ show:false } },
       yAxis: [
         { type:"value",
           axisLabel:{ color:axisColor, fontSize:11, formatter:function(v){return v.toFixed(2)+"%";}},
-          splitLine:{ show:true, lineStyle:{type:"dashed",color:"#e0e0e0"}},
+          splitLine:{ show:true, lineStyle:{type:"dashed",color:palette.grid}},
           min:-aa, max:aa, interval:aa/4 },
         { type:"value",
           axisLabel:{ show: DWJZ > 0, color:axisColor, fontSize:11, formatter:function(v){return(DWJZ*(1+0.01*v)).toFixed(4);} },
-          splitLine:{ show:true, lineStyle:{type:"dashed",color:"#e0e0e0"}},
+          splitLine:{ show:true, lineStyle:{type:"dashed",color:palette.grid}},
           min:-aa, max:aa, interval:aa/4 }
       ],
       series:[
         { name:"估算涨跌幅", type:"line", data:seriesData, showSymbol:false,
           lineStyle:{width:1.2,color:"#409eff"}, itemStyle:{color:"#409eff"},
           markLine:{ silent:true, symbol:"none", animation:false, label:{show:false},
-            lineStyle:{type:"solid",color:"#999"}, data:[{yAxis:0}] } },
+            lineStyle:{type:"solid",color:palette.axis}, data:[{yAxis:0}] } },
         { name:"估算净值", type:"line", symbol:"none", data:seriesData, yAxisIndex:1, lineStyle:{width:0} }
       ]
     });
@@ -1039,6 +1038,7 @@
    */
   function renderHistoryChart(containerEl, historyList, estimate) {
     var echartsLib = getEcharts();
+    var palette = getChartPalette();
     if (!echartsLib) {
       containerEl.innerHTML = '<div class="fd-error">图表库未加载</div>';
       return;
@@ -1078,20 +1078,20 @@
 
     chartInstance.setOption({
       tooltip: { trigger: "axis", formatter: tooltipFmt,
-        backgroundColor: "rgba(255,255,255,.96)", borderColor: "#ccc", borderWidth: 1,
-        textStyle: { color: "#333", fontSize: 12 } },
+        backgroundColor: palette.tooltipBackground, borderColor: palette.tooltipBorder, borderWidth: 1,
+        textStyle: { color: palette.tooltipText, fontSize: 12 } },
       grid: { top: 20, bottom: 38, left: 60, right: 24 },
       xAxis: {
         type: "category", data: dates, boundaryGap: false,
-        axisLabel: { fontSize: 10, color: "#999", interval: showHistoryLabel,
+        axisLabel: { fontSize: 10, color: palette.axis, interval: showHistoryLabel,
           formatter: formatHistoryDate, hideOverlap: true, showMinLabel: true, showMaxLabel: true },
-        axisLine: { lineStyle: { color: "#ccc" } },
+        axisLine: { lineStyle: { color: palette.tooltipBorder } },
         axisTick: { show: false }
       },
       yAxis: {
         type: "value", scale: true,
-        axisLabel: { color: "#666", fontSize: 10, formatter: function (v) { var pct = navToPct(v); return (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%"; } },
-        splitLine: { show: true, lineStyle: { type: "dashed", color: "#eee" } }
+        axisLabel: { color: palette.axis, fontSize: 10, formatter: function (v) { var pct = navToPct(v); return (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%"; } },
+        splitLine: { show: true, lineStyle: { type: "dashed", color: palette.grid } }
       },
       series: [
         { name: "单位净值", type: "line", data: navValues, showSymbol: false,

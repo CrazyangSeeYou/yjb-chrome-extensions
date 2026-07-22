@@ -112,4 +112,4 @@ var window = self;
     self.XMLHttpRequest = XMLHttpRequest;
 })();
 
-importScripts('js/chunk-vendors.js', 'js/background.js');
+importScripts('js/chunk-vendors.js', 'js/background.js', 'js/valuation-service.js');

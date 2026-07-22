@@ -16,5 +16,23 @@
             "urlFilter": "||hq.sinajs.cn/list=fu_",
             "resourceTypes": ["xmlhttprequest"]
         }
+    },
+    {
+        "id": 2,
+        "priority": 1,
+        "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+                {
+                    "header": "User-Agent",
+                    "operation": "set",
+                    "value": "EastMoney/10.25.0 (iPhone; iOS 18.0; Scale/3.00)"
+                }
+            ]
+        },
+        "condition": {
+            "urlFilter": "||fundmobapi.eastmoney.com/FundM",
+            "resourceTypes": ["xmlhttprequest"]
+        }
     }
 ]

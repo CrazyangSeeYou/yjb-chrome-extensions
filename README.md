@@ -1,7 +1,7 @@
 # 养鸡宝 Chrome 插件
 （养基宝官网下载的插件AI魔改，解决官方的插件不实时刷新收益率/收益的问题，侵删）
 
-使用了 公开基金估值接口： 天天基金估值 东方财富基金接口
+使用新浪基金估值、东方财富基金净值/持仓和证券行情接口，并在公开估值缺失时按持仓权重自行推导。
 
 这是一个 Chrome MV3 插件，用于通过养鸡宝的微信扫码入口登录账号，并在浏览器弹窗中查看基金持仓、指数行情、实时估值、当日收益和角标收益提醒。
 
@@ -38,19 +38,23 @@
 3. 插件轮询二维码状态接口。
 4. 登录成功后，后端返回 `token`、头像和昵称。
 5. 插件使用该 `token` 请求账号列表、基金持仓、收益数据等接口。
-6. 持仓数据会结合公开基金估值接口补充实时估值，再计算界面和角标收益。
+6. 持仓数据会结合公开基金估值或公开持仓行情补充实时估值，再计算界面和角标收益。
 
 
 ### 公开基金估值接口
 
 | 来源 | 方法 | 地址 | 用途 |
 | --- | --- | --- | --- |
-| 天天基金估值 | GET | `https://fundgz.1234567.com.cn/js/{code}.js?rt={timestamp}` | 优先获取基金实时估值 |
-| 东方财富基金接口 | GET | `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?...&Fcodes={codes}` | 批量补充缺失估值和净值 |
-| 天天基金分钟估值 | GET | `https://fundcomapi.tiantianfunds.com/mm/newCore/FundVarietieValuationDetail?FCODE={code}` | 详情浮层的分钟级估值走势 |
+| 新浪基金估值 | GET | `https://hq.sinajs.cn/list=fu_{code1},fu_{code2}` | 批量获取普通基金当日估值 |
+| 东方财富基金净值 | GET | `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?...&Fcodes={codes}` | 获取估值计算所需的最新已披露净值 |
+| 东方财富基金持仓 | GET | `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition?FCODE={code}` | 获取联接 ETF 和已披露股票占比 |
+| 东方财富证券行情 | GET | `https://push2delay.eastmoney.com/api/qt/ulist.np/get?secids={secids}` | 批量获取 ETF、指数和持仓股票涨跌幅 |
+| 天天基金分钟估值 | GET | `https://fundcomapi.tiantianfunds.com/mm/newCore/FundVarietieValuationDetail?FCODE={code}` | 详情浮层的分钟级估值走势（接口有数据时） |
 | 东方财富历史净值 | GET | `https://fundmobapi.eastmoney.com/FundMApi/FundNetDiagram.ashx?FCODE={code}&RANGE={range}` | 详情浮层的历史净值走势 |
-| 东方财富行情走势 | GET | `https://push2delay.eastmoney.com/api/qt/stock/trends2/get?secid={secid}` | 联接ETF/跟踪指数/持仓推导估值曲线 |
-| 新浪估值 | GET | `https://hq.sinajs.cn/list=fu_{code}` | fundgz 无估值时的实时估值兜底 |
+
+后台估值按以下顺序降级：新浪批量估值 → 联接 ETF 行情 → 跟踪指数行情 → 已披露股票持仓加权。持仓推导公式为 `Σ(股票净值占比 × 股票涨跌幅) / 100`，未披露资产按当日不变处理，避免把前十大持仓错误放大到 100%。货币基金、纯债基金等没有可靠盘中行情的品种不会伪造估值，继续展示最新已披露净值。
+
+东方财富移动基金接口会拒绝浏览器默认 User-Agent。`rules/sina-estimate.json` 中的 DNR 规则只针对该域名改写为移动客户端 User-Agent，同时为新浪估值接口补充必需的 Referer。
 
 ## 基金详情浮层
 
@@ -67,7 +71,6 @@
 http://192.168.101.181:8010/yjb_plugin/*
 http://yjbplugin-test.52guihua.cn/*
 http://browser-plug-api.yangjibao.com/*
-https://fundgz.1234567.com.cn/*
 https://fundmobapi.eastmoney.com/*
 https://api.fund.eastmoney.com/*
 https://fundcomapi.tiantianfunds.com/*
@@ -123,4 +126,5 @@ GET /qr_code_state/{qrId}
 node --check js/popup.js
 node --check js/background.js
 node --check service-worker.js
+node ../tests/valuation-service.test.js
 ```
