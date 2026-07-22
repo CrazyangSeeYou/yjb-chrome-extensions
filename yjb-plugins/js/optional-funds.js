@@ -10,6 +10,11 @@
     sort: "default",
     requestId: 0,
     updatedAt: "",
+    authPhone: "",
+    authSending: false,
+    authSubmitting: false,
+    codeCountdown: 0,
+    countdownTimer: null,
   };
   var page = null;
   var observer = null;
@@ -416,17 +421,209 @@
   function renderError(error) {
     var authInvalid = Boolean(error && error.authInvalid);
     var code = error && error.code;
+    if (authInvalid || code === "APP_LOGIN_REQUIRED") {
+      page.querySelector(".yjb_optional_count").textContent = "需要验证";
+      page.querySelector(".yjb_optional_updated").textContent = "";
+      var authMessage =
+        code === "APP_WECHAT_BIND_REQUIRED"
+          ? error.message
+          : code === "APP_LOGIN_REQUIRED"
+            ? "验证 App 账号后加载自选基金"
+            : "App 登录已失效，请重新验证";
+      renderAuth(authMessage);
+      return;
+    }
     var message =
-      code === "NOT_LOGGED_IN"
-        ? "请先在持有页扫码登录"
-        : authInvalid
-          ? "登录凭证无法访问 App 自选，请重新登录"
-          : error && error.message
-            ? error.message
-            : "自选基金加载失败";
+      error && error.message ? error.message : "自选基金加载失败";
     page.querySelector(".yjb_optional_count").textContent = "加载失败";
     page.querySelector(".yjb_optional_updated").textContent = "";
-    renderState("error", message, authInvalid || code === "NOT_LOGGED_IN" ? "返回持有" : "重新加载");
+    renderState("error", message, "重新加载");
+  }
+
+  function renderAuth(message) {
+    var body = page.querySelector(".yjb_optional_body");
+    var container = document.createElement("div");
+    container.className = "yjb_optional_state is-auth";
+
+    var form = document.createElement("form");
+    form.className = "yjb_optional_auth";
+    form.setAttribute("aria-label", "App 短信登录");
+
+    var title = createCell("yjb_optional_auth_title", "验证 App 账号");
+    var status = createCell("yjb_optional_auth_status", message);
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+
+    var phoneRow = document.createElement("div");
+    phoneRow.className = "yjb_optional_auth_phone";
+    var phoneInput = createAuthInput("tel", "手机号", 11, "tel");
+    phoneInput.classList.add("yjb_optional_auth_phone_input");
+    phoneInput.value = state.authPhone;
+    phoneInput.addEventListener("input", function () {
+      phoneInput.value = phoneInput.value.replace(/\D/g, "").slice(0, 11);
+      state.authPhone = phoneInput.value;
+    });
+
+    var sendButton = document.createElement("button");
+    sendButton.type = "button";
+    sendButton.className = "yjb_optional_auth_code_button";
+    sendButton.addEventListener("click", function () {
+      handleSendCode(form, phoneInput, status);
+    });
+    phoneRow.appendChild(phoneInput);
+    phoneRow.appendChild(sendButton);
+
+    var codeInput = createAuthInput("text", "4 位验证码", 4, "one-time-code");
+    codeInput.classList.add("yjb_optional_auth_verify_input");
+    codeInput.addEventListener("input", function () {
+      codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 4);
+    });
+
+    var submitButton = document.createElement("button");
+    submitButton.type = "submit";
+    submitButton.className = "yjb_optional_auth_submit";
+    submitButton.textContent = "登录并加载";
+
+    form.appendChild(title);
+    form.appendChild(phoneRow);
+    form.appendChild(codeInput);
+    form.appendChild(submitButton);
+    form.appendChild(status);
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      handleAppLogin(form, phoneInput, codeInput, status);
+    });
+    container.appendChild(form);
+    body.replaceChildren(container);
+    updateAuthControls(form);
+  }
+
+  function createAuthInput(type, placeholder, maxLength, autocomplete) {
+    var input = document.createElement("input");
+    input.type = type;
+    input.className = "yjb_optional_auth_input";
+    input.placeholder = placeholder;
+    input.setAttribute("aria-label", placeholder);
+    input.inputMode = "numeric";
+    input.maxLength = maxLength;
+    input.autocomplete = autocomplete;
+    return input;
+  }
+
+  function setAuthStatus(status, message, isError) {
+    status.textContent = message;
+    status.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function updateAuthControls(form) {
+    if (!form || !form.isConnected) return;
+    var sendButton = form.querySelector(".yjb_optional_auth_code_button");
+    var submitButton = form.querySelector(".yjb_optional_auth_submit");
+    var waiting = state.codeCountdown > 0;
+    sendButton.disabled = state.authSending || state.authSubmitting || waiting;
+    sendButton.textContent = state.authSending
+      ? "发送中"
+      : waiting
+        ? state.codeCountdown + " 秒"
+        : "获取验证码";
+    submitButton.disabled = state.authSending || state.authSubmitting;
+    submitButton.textContent = state.authSubmitting ? "登录中" : "登录并加载";
+  }
+
+  function startCodeCountdown(form) {
+    if (state.countdownTimer) clearInterval(state.countdownTimer);
+    state.codeCountdown = 60;
+    updateAuthControls(form);
+    state.countdownTimer = setInterval(function () {
+      state.codeCountdown -= 1;
+      if (state.codeCountdown <= 0) {
+        state.codeCountdown = 0;
+        clearInterval(state.countdownTimer);
+        state.countdownTimer = null;
+      }
+      updateAuthControls(form);
+    }, 1000);
+  }
+
+  function handleSendCode(form, phoneInput, status) {
+    var phone = phoneInput.value.trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      setAuthStatus(status, "请输入正确的手机号", true);
+      phoneInput.focus();
+      return;
+    }
+
+    state.authSending = true;
+    updateAuthControls(form);
+    setAuthStatus(status, "正在发送验证码", false);
+    sendMessage({ type: "appSendCode", phone: phone })
+      .then(function (response) {
+        if (!response || !response.ok) {
+          setAuthStatus(
+            status,
+            response && response.error && response.error.message
+              ? response.error.message
+              : "验证码发送失败",
+            true,
+          );
+          return;
+        }
+        setAuthStatus(status, "验证码已发送", false);
+        startCodeCountdown(form);
+      })
+      .catch(function (error) {
+        setAuthStatus(status, error.message || "验证码发送失败", true);
+      })
+      .finally(function () {
+        state.authSending = false;
+        updateAuthControls(form);
+      });
+  }
+
+  function handleAppLogin(form, phoneInput, codeInput, status) {
+    var phone = phoneInput.value.trim();
+    var verifyCode = codeInput.value.trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      setAuthStatus(status, "请输入正确的手机号", true);
+      phoneInput.focus();
+      return;
+    }
+    if (!/^\d{4}$/.test(verifyCode)) {
+      setAuthStatus(status, "请输入 4 位验证码", true);
+      codeInput.focus();
+      return;
+    }
+
+    state.authSubmitting = true;
+    updateAuthControls(form);
+    setAuthStatus(status, "正在验证 App 账号", false);
+    sendMessage({ type: "appLogin", phone: phone, verifyCode: verifyCode })
+      .then(function (response) {
+        if (!response || !response.ok) {
+          setAuthStatus(
+            status,
+            response && response.error && response.error.message
+              ? response.error.message
+              : "登录失败",
+            true,
+          );
+          return;
+        }
+        state.authPhone = "";
+        state.groups = [];
+        state.funds = [];
+        state.selectedGroup = "all";
+        state.sort = "default";
+        codeInput.value = "";
+        loadFunds("all", true);
+      })
+      .catch(function (error) {
+        setAuthStatus(status, error.message || "登录失败", true);
+      })
+      .finally(function () {
+        state.authSubmitting = false;
+        updateAuthControls(form);
+      });
   }
 
   function renderState(kind, message, actionText) {
@@ -446,8 +643,7 @@
       action.className = "yjb_optional_state_action";
       action.textContent = actionText;
       action.addEventListener("click", function () {
-        if (actionText === "返回持有") restoreHoldPage();
-        else loadFunds(state.selectedGroup, state.groups.length === 0);
+        loadFunds(state.selectedGroup, state.groups.length === 0);
       });
       container.appendChild(action);
     }

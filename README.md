@@ -15,6 +15,7 @@
 - 根据持仓和公开估值接口计算当日收益。
 - 支持浏览器角标显示当日收益或收益率。
 - 支持基金搜索、添加持仓、删除持仓。
+- 展示 App 自选基金分组、估算净值、当日涨幅和关联板块。
 - 点击基金弹出详情浮层，查看净值估算走势与历史净值走势。
 
 ## 截图
@@ -39,6 +40,18 @@
 4. 登录成功后，后端返回 `token`、头像和昵称。
 5. 插件使用该 `token` 请求账号列表、基金持仓、收益数据等接口。
 6. 持仓数据会结合公开基金估值或公开持仓行情补充实时估值，再计算界面和角标收益。
+
+“持有”和“自选”使用养基宝的两套独立会话。浏览器扫码返回的 `token` 只用于持仓接口，不能请求 App 自选接口。首次打开“自选”时，插件通过官方 App 接口发送短信验证码，并将登录成功返回的 App Token 单独保存为 `appToken`；手机号和验证码不会写入插件存储。
+
+App 自选相关接口：
+
+```text
+POST https://app-api.yangjibao.com/send_code
+POST https://app-api.yangjibao.com/login
+GET  https://app-api.yangjibao.com/users/v1/fund-group
+GET  https://app-api.yangjibao.com/position/v1/option/all
+GET  https://app-api.yangjibao.com/position/v1/option/group?group_id={id}
+```
 
 
 ### 公开基金估值接口
@@ -71,6 +84,7 @@
 http://192.168.101.181:8010/yjb_plugin/*
 http://yjbplugin-test.52guihua.cn/*
 http://browser-plug-api.yangjibao.com/*
+https://app-api.yangjibao.com/*
 https://fundmobapi.eastmoney.com/*
 https://api.fund.eastmoney.com/*
 https://fundcomapi.tiantianfunds.com/*
@@ -80,7 +94,7 @@ https://searchapi.eastmoney.com/*
 https://hq.sinajs.cn/*
 ```
 
-其中 `browser-plug-api.yangjibao.com` 是正式后端接口；其余域名用于基金估值、历史净值、行情走势与搜索等数据补充，供详情浮层与收益计算使用。
+其中 `browser-plug-api.yangjibao.com` 是浏览器持仓后端，`app-api.yangjibao.com` 用于 App 自选登录、分组和列表；其余域名用于基金估值、历史净值、行情走势与搜索等数据补充，供详情浮层与收益计算使用。
 
 ## 关于第三方平台名称
 
@@ -126,5 +140,6 @@ GET /qr_code_state/{qrId}
 node --check js/popup.js
 node --check js/background.js
 node --check service-worker.js
+node ../tests/app-api.test.js
 node ../tests/valuation-service.test.js
 ```

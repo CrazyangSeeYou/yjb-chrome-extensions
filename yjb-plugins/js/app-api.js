@@ -144,27 +144,34 @@
 
   function getStoredToken() {
     return new Promise(function (resolve, reject) {
-      chrome.storage.local.get("token", function (result) {
+      chrome.storage.local.get("appToken", function (result) {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        resolve(result && result.token ? String(result.token).trim() : "");
+        var token = result && result.appToken ? String(result.appToken).trim() : "";
+        resolve(token.replace(/^android:/i, ""));
       });
     });
   }
 
-  function getTokenCandidates(storedToken) {
-    var token = String(storedToken || "").trim();
-    if (!token) return [];
-    if (/^android:/i.test(token)) return [token.slice(8)];
-    if (/^bearer\s+/i.test(token)) return [token.replace(/^bearer\s+/i, "")];
+  function setStoredToken(token) {
+    return new Promise(function (resolve, reject) {
+      chrome.storage.local.set({ appToken: String(token || "").trim() }, function () {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
 
-    var candidates = [token];
-    var prefixed = token.match(/^[a-z][a-z0-9_-]*:(.+)$/i);
-    if (prefixed && prefixed[1]) candidates.unshift(prefixed[1]);
-    return candidates.filter(function (candidate, index, values) {
-      return candidate && values.indexOf(candidate) === index;
+  function removeStoredToken() {
+    return new Promise(function (resolve) {
+      chrome.storage.local.remove("appToken", function () {
+        resolve();
+      });
     });
   }
 
@@ -189,12 +196,15 @@
     );
   }
 
-  async function request(path, token, query) {
+  async function request(path, token, options) {
+    options = options || {};
+    var method = options.method || "GET";
+    var query = options.query || "";
     var timestamp = Math.floor(Date.now() / 1000);
     var signature = md5(BASE_URL + path + token + SECRET + timestamp);
-    var url = BASE_URL + path + (query || "");
-    var response = await fetch(url, {
-      method: "GET",
+    var url = BASE_URL + path + query;
+    var fetchOptions = {
+      method: method,
       headers: {
         "Request-Time": String(timestamp),
         "Request-Sign": signature,
@@ -203,6 +213,14 @@
         platform: "hwyysc",
         version: APP_VERSION,
       },
+    };
+    if (options.body !== undefined) {
+      fetchOptions.body = JSON.stringify(options.body);
+    }
+    var response = await fetch(url, {
+      method: fetchOptions.method,
+      headers: fetchOptions.headers,
+      body: fetchOptions.body,
     });
     var text = await response.text();
     var payload;
@@ -248,7 +266,7 @@
       var groupData = await request(
         groupPath,
         token,
-        "?group_id=" + encodeURIComponent(String(groupId)),
+        { query: "?group_id=" + encodeURIComponent(String(groupId)) },
       );
       return { groups: null, funds: toList(groupData) };
     }
@@ -261,43 +279,108 @@
   }
 
   async function loadOptionalFunds(groupId) {
-    var storedToken = await getStoredToken();
-    var candidates = getTokenCandidates(storedToken);
-    if (!candidates.length) {
-      throw createApiError("请先扫码登录", "NOT_LOGGED_IN", true);
+    var token = await getStoredToken();
+    if (!token) {
+      throw createApiError("请验证 App 账号", "APP_LOGIN_REQUIRED", true);
     }
 
-    var lastError;
-    for (var i = 0; i < candidates.length; i += 1) {
-      try {
-        return await loadWithToken(groupId, candidates[i]);
-      } catch (error) {
-        lastError = error;
-        if (!error.authInvalid || i === candidates.length - 1) throw error;
-      }
+    try {
+      return await loadWithToken(groupId, token);
+    } catch (error) {
+      if (error && error.authInvalid) await removeStoredToken();
+      throw error;
     }
-    throw lastError;
+  }
+
+  async function sendLoginCode(phone) {
+    var normalizedPhone = String(phone || "").trim();
+    if (!/^1[3-9]\d{9}$/.test(normalizedPhone)) {
+      throw createApiError("请输入正确的手机号", "INVALID_PHONE", false);
+    }
+    await request("send_code", "", {
+      method: "POST",
+      body: { phone: normalizedPhone },
+    });
+  }
+
+  async function loginWithPhone(phone, verifyCode) {
+    var normalizedPhone = String(phone || "").trim();
+    var normalizedCode = String(verifyCode || "").trim();
+    if (!/^1[3-9]\d{9}$/.test(normalizedPhone)) {
+      throw createApiError("请输入正确的手机号", "INVALID_PHONE", false);
+    }
+    if (!/^\d{4}$/.test(normalizedCode)) {
+      throw createApiError("请输入 4 位验证码", "INVALID_VERIFY_CODE", false);
+    }
+
+    var data = await request("login", "", {
+      method: "POST",
+      body: {
+        mode: "phone",
+        phone: normalizedPhone,
+        verify_code: normalizedCode,
+        is_band_wechat: 2,
+      },
+    });
+    if (data && data.phone && data.ukey) {
+      throw createApiError(
+        "该手机号需要先在养基宝 App 完成微信绑定",
+        "APP_WECHAT_BIND_REQUIRED",
+        true,
+      );
+    }
+    var token = data && data.token ? String(data.token).trim() : "";
+    if (!token) {
+      throw createApiError("登录接口未返回有效凭证", "INVALID_LOGIN_RESPONSE", true);
+    }
+    await setStoredToken(token);
+  }
+
+  function serializeError(error) {
+    return {
+      code: error && error.code ? error.code : "APP_API_ERROR",
+      message: error && error.message ? error.message : "自选基金请求失败",
+      authInvalid: Boolean(error && error.authInvalid),
+    };
   }
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-    if (!message || message.type !== "optionalFunds") return undefined;
+    if (!message) return undefined;
 
-    loadOptionalFunds(message.groupId)
-      .then(function (data) {
-        sendResponse({ type: "optionalFunds", ok: true, data: data });
-      })
-      .catch(function (error) {
-        sendResponse({
-          type: "optionalFunds",
-          ok: false,
-          error: {
-            code: error && error.code ? error.code : "APP_API_ERROR",
-            message: error && error.message ? error.message : "自选基金请求失败",
-            authInvalid: Boolean(error && error.authInvalid),
-          },
+    if (message.type === "optionalFunds") {
+      loadOptionalFunds(message.groupId)
+        .then(function (data) {
+          sendResponse({ type: message.type, ok: true, data: data });
+        })
+        .catch(function (error) {
+          sendResponse({ type: message.type, ok: false, error: serializeError(error) });
         });
-      });
-    return true;
+      return true;
+    }
+
+    if (message.type === "appSendCode") {
+      sendLoginCode(message.phone)
+        .then(function () {
+          sendResponse({ type: message.type, ok: true });
+        })
+        .catch(function (error) {
+          sendResponse({ type: message.type, ok: false, error: serializeError(error) });
+        });
+      return true;
+    }
+
+    if (message.type === "appLogin") {
+      loginWithPhone(message.phone, message.verifyCode)
+        .then(function () {
+          sendResponse({ type: message.type, ok: true });
+        })
+        .catch(function (error) {
+          sendResponse({ type: message.type, ok: false, error: serializeError(error) });
+        });
+      return true;
+    }
+
+    return undefined;
   });
 
   self.__yjbAppApi = {
