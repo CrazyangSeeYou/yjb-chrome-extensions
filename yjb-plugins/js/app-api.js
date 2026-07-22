@@ -5,6 +5,8 @@
   var SECRET =
     "bjAePTJ32qByWfikZaZF8b9yBsoJZyvPLBflrY9XHLJLegfBG1RvO1hllGRfBT2V";
   var APP_VERSION = "3.0.6";
+  var OPTIONAL_CACHE_KEY = "appOptionalFundsCache";
+  var OPTIONAL_CACHE_VERSION = 1;
 
   function add32(a, b) {
     return (a + b) | 0;
@@ -175,6 +177,42 @@
     });
   }
 
+  function getStoredCache() {
+    return new Promise(function (resolve, reject) {
+      chrome.storage.local.get(OPTIONAL_CACHE_KEY, function (result) {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        var cache = result && result[OPTIONAL_CACHE_KEY];
+        if (
+          !cache ||
+          cache.version !== OPTIONAL_CACHE_VERSION ||
+          !Array.isArray(cache.groups) ||
+          !Array.isArray(cache.fundGroups)
+        ) {
+          resolve(null);
+          return;
+        }
+        resolve(cache);
+      });
+    });
+  }
+
+  function setStoredCache(cache) {
+    return new Promise(function (resolve, reject) {
+      var values = {};
+      values[OPTIONAL_CACHE_KEY] = cache;
+      chrome.storage.local.set(values, function () {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
   function createApiError(message, code, authInvalid) {
     var error = new Error(message || "自选基金请求失败");
     error.code = code || "APP_API_ERROR";
@@ -270,13 +308,13 @@
     return normalized !== "" && normalized !== "-" && normalized !== "--";
   }
 
-  function fillValuationValue(target, key, value) {
-    if (!hasValuationValue(target[key]) && hasValuationValue(value)) {
+  function fillValuationValue(target, key, value, overwrite) {
+    if (hasValuationValue(value) && (overwrite || !hasValuationValue(target[key]))) {
       target[key] = value;
     }
   }
 
-  async function enrichFundsWithValuations(funds) {
+  async function enrichFundsWithValuations(funds, overwrite) {
     if (!Array.isArray(funds) || !funds.length) return funds;
     var fetchSnapshots =
       typeof self.__fetchAllFundSnapshots === "function"
@@ -297,14 +335,14 @@
         var info = fund.nv_info && typeof fund.nv_info === "object"
           ? fund.nv_info
           : (fund.nv_info = {});
-        fillValuationValue(info, "gsz", valuation.gsz);
-        fillValuationValue(info, "gszzl", valuation.gszzl);
-        fillValuationValue(info, "dwjz", valuation.dwjz);
-        fillValuationValue(info, "jzrq", valuation.jzrq);
-        fillValuationValue(info, "rzzl", valuation.rzzl);
-        fillValuationValue(info, "gztime", valuation.gztime);
-        fillValuationValue(info, "qjgzrq", valuation.gztime);
-        fillValuationValue(info, "zxjzrq", valuation.jzrq);
+        fillValuationValue(info, "gsz", valuation.gsz, overwrite);
+        fillValuationValue(info, "gszzl", valuation.gszzl, overwrite);
+        fillValuationValue(info, "dwjz", valuation.dwjz, overwrite);
+        fillValuationValue(info, "jzrq", valuation.jzrq, overwrite);
+        fillValuationValue(info, "rzzl", valuation.rzzl, overwrite);
+        fillValuationValue(info, "gztime", valuation.gztime, overwrite);
+        fillValuationValue(info, "qjgzrq", valuation.gztime, overwrite);
+        fillValuationValue(info, "zxjzrq", valuation.jzrq, overwrite);
       });
     } catch (error) {
       // 自选接口数据仍可展示，实时估值失败时保留原始字段。
@@ -312,37 +350,122 @@
     return funds;
   }
 
-  async function loadWithToken(groupId, token) {
-    var hasGroup =
-      groupId !== undefined && groupId !== null && String(groupId) !== "all";
-    if (hasGroup) {
-      var groupPath = "position/v1/option/group";
-      var groupData = await request(
-        groupPath,
-        token,
-        { query: "?group_id=" + encodeURIComponent(String(groupId)) },
-      );
-      return { groups: null, funds: await enrichFundsWithValuations(toList(groupData)) };
-    }
+  function getGroupId(group) {
+    if (!group || group.id === undefined || group.id === null) return "";
+    return String(group.id);
+  }
 
+  function isAllGroup(group) {
+    return Boolean(group && (group.is_all || getGroupId(group) === "all"));
+  }
+
+  function cloneList(list) {
+    if (!Array.isArray(list)) return [];
+    return JSON.parse(JSON.stringify(list));
+  }
+
+  function isSameLocalDate(left, right) {
+    var a = new Date(left);
+    var b = new Date(right);
+    return (
+      !isNaN(a.getTime()) &&
+      !isNaN(b.getTime()) &&
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
+  }
+
+  function clearExpiredEstimate(funds, syncedAt) {
+    if (isSameLocalDate(syncedAt, Date.now())) return funds;
+    var infoKeys = ["gsz", "gszzl", "zsgz", "zsgzzl", "vgsz", "vgszzl", "gztime", "qjgzrq"];
+    var fundKeys = [
+      "gsz",
+      "gszzl",
+      "zsgz",
+      "zsgzzl",
+      "vgsz",
+      "vgszzl",
+      "increase_rate",
+      "day_increase_rate",
+      "estimate_rate",
+    ];
+    funds.forEach(function (fund) {
+      if (!fund || typeof fund !== "object") return;
+      fundKeys.forEach(function (key) {
+        delete fund[key];
+      });
+      if (fund.nv_info && typeof fund.nv_info === "object") {
+        infoKeys.forEach(function (key) {
+          delete fund.nv_info[key];
+        });
+      }
+    });
+    return funds;
+  }
+
+  async function syncOptionalFundsCache(token) {
     var result = await Promise.all([
       request("users/v1/fund-group", token),
       request("position/v1/option/all", token),
     ]);
+    var groups = toList(result[0]);
+    var fundGroups = [{ id: "all", funds: toList(result[1]) }];
+    var regularGroups = groups.filter(function (group) {
+      return getGroupId(group) && !isAllGroup(group);
+    });
+    var groupLists = await Promise.all(
+      regularGroups.map(function (group) {
+        var groupId = getGroupId(group);
+        return request("position/v1/option/group", token, {
+          query: "?group_id=" + encodeURIComponent(groupId),
+        }).then(function (data) {
+          return { id: groupId, funds: toList(data) };
+        });
+      }),
+    );
+    fundGroups.push.apply(fundGroups, groupLists);
+
+    var cache = {
+      version: OPTIONAL_CACHE_VERSION,
+      syncedAt: new Date().toISOString(),
+      groups: groups,
+      fundGroups: fundGroups,
+    };
+    await setStoredCache(cache);
+    return cache;
+  }
+
+  async function readOptionalFundsCache(cache, groupId) {
+    var normalizedGroupId =
+      groupId === undefined || groupId === null ? "all" : String(groupId);
+    var entry = cache.fundGroups.find(function (group) {
+      return group && String(group.id) === normalizedGroupId;
+    });
+    var funds = clearExpiredEstimate(cloneList(entry && entry.funds), cache.syncedAt);
     return {
-      groups: toList(result[0]),
-      funds: await enrichFundsWithValuations(toList(result[1])),
+      groups: normalizedGroupId === "all" ? cloneList(cache.groups) : null,
+      funds: await enrichFundsWithValuations(funds, true),
+      source: "cache",
+      cachedAt: cache.syncedAt,
     };
   }
 
-  async function loadOptionalFunds(groupId) {
+  async function loadOptionalFunds(groupId, forceRefresh) {
+    var cache = await getStoredCache();
+    if (cache && !forceRefresh) {
+      return readOptionalFundsCache(cache, groupId);
+    }
+
     var token = await getStoredToken();
     if (!token) {
-      throw createApiError("请验证 App 账号", "APP_LOGIN_REQUIRED", true);
+      throw createApiError("请初始化或重新同步自选列表", "APP_LOGIN_REQUIRED", true);
     }
 
     try {
-      return await loadWithToken(groupId, token);
+      cache = await syncOptionalFundsCache(token);
+      await removeStoredToken();
+      return await readOptionalFundsCache(cache, groupId);
     } catch (error) {
       if (error && error.authInvalid) await removeStoredToken();
       throw error;
@@ -405,7 +528,7 @@
     if (!message) return undefined;
 
     if (message.type === "optionalFunds") {
-      loadOptionalFunds(message.groupId)
+      loadOptionalFunds(message.groupId, Boolean(message.forceRefresh))
         .then(function (data) {
           sendResponse({ type: message.type, ok: true, data: data });
         })

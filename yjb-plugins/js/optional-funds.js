@@ -10,6 +10,9 @@
     sort: "default",
     requestId: 0,
     updatedAt: "",
+    cachedAt: "",
+    usingCache: false,
+    forceRefresh: false,
     authPhone: "",
     authSending: false,
     authSubmitting: false,
@@ -42,7 +45,10 @@
       '<div class="yjb_optional_groups" role="tablist" aria-label="自选分组"></div>' +
       '<div class="yjb_optional_meta">' +
       '<span class="yjb_optional_count">0只基金</span>' +
+      '<div class="yjb_optional_meta_actions">' +
       '<span class="yjb_optional_updated"></span>' +
+      '<button type="button" class="yjb_optional_resync" title="重新同步自选列表" hidden>同步列表</button>' +
+      "</div>" +
       "</div>" +
       '<div class="yjb_optional_table">' +
       '<div class="yjb_optional_table_head" role="row">' +
@@ -62,6 +68,9 @@
     section
       .querySelector(".yjb_optional_sort")
       .addEventListener("click", handleSortClick);
+    section
+      .querySelector(".yjb_optional_resync")
+      .addEventListener("click", handleResyncClick);
     return section;
   }
 
@@ -141,12 +150,14 @@
     });
   }
 
-  function loadFunds(groupId, includeGroups) {
+  function loadFunds(groupId, includeGroups, forceRefresh) {
     var currentRequest = ++state.requestId;
-    renderLoading();
+    state.forceRefresh = Boolean(forceRefresh);
+    renderLoading(state.forceRefresh);
     sendMessage({
       type: "optionalFunds",
       groupId: includeGroups || groupId === "all" ? undefined : groupId,
+      forceRefresh: state.forceRefresh,
     })
       .then(function (response) {
         if (!state.active || currentRequest !== state.requestId) return;
@@ -161,6 +172,9 @@
         }
         state.funds = Array.isArray(data.funds) ? data.funds : [];
         state.updatedAt = formatClock(new Date());
+        state.cachedAt = data.cachedAt || "";
+        state.usingCache = data.source === "cache";
+        state.forceRefresh = false;
         renderGroups();
         renderFunds();
       })
@@ -233,6 +247,13 @@
     renderGroups();
     updateSortState();
     loadFunds(state.selectedGroup, false);
+  }
+
+  function handleResyncClick() {
+    state.selectedGroup = "all";
+    state.sort = "default";
+    updateSortState();
+    loadFunds("all", true, true);
   }
 
   function handleSortClick() {
@@ -403,9 +424,18 @@
     var body = page.querySelector(".yjb_optional_body");
     var funds = sortedFunds();
     page.querySelector(".yjb_optional_count").textContent = funds.length + "只基金";
-    page.querySelector(".yjb_optional_updated").textContent = state.updatedAt
-      ? "更新于 " + state.updatedAt
+    var updated = page.querySelector(".yjb_optional_updated");
+    updated.textContent = state.updatedAt
+      ? state.usingCache
+        ? "本地自选 · 行情 " + state.updatedAt
+        : "更新于 " + state.updatedAt
       : "";
+    updated.title = state.cachedAt
+      ? "自选列表同步于 " + formatCacheTime(state.cachedAt)
+      : "";
+    var resync = page.querySelector(".yjb_optional_resync");
+    resync.hidden = !state.usingCache;
+    resync.disabled = false;
 
     if (!funds.length) {
       renderState("empty", "当前分组暂无自选基金", "");
@@ -419,26 +449,30 @@
     body.replaceChildren(fragment);
   }
 
-  function renderLoading() {
+  function renderLoading(syncingList) {
     if (!page) return;
     renderGroups();
     page.querySelector(".yjb_optional_count").textContent = "正在加载";
     page.querySelector(".yjb_optional_updated").textContent = "";
-    renderState("loading", "正在同步自选基金", "");
+    page.querySelector(".yjb_optional_resync").disabled = true;
+    renderState(
+      "loading",
+      syncingList ? "正在同步自选列表" : "正在更新自选基金行情",
+      "",
+    );
   }
 
   function renderError(error) {
     var authInvalid = Boolean(error && error.authInvalid);
     var code = error && error.code;
+    page.querySelector(".yjb_optional_resync").disabled = false;
     if (authInvalid || code === "APP_LOGIN_REQUIRED") {
       page.querySelector(".yjb_optional_count").textContent = "需要验证";
       page.querySelector(".yjb_optional_updated").textContent = "";
       var authMessage =
         code === "APP_WECHAT_BIND_REQUIRED"
           ? error.message
-          : code === "APP_LOGIN_REQUIRED"
-            ? "验证 App 账号后加载自选基金"
-            : "App 登录已失效，请重新验证";
+          : "养基宝仅允许一个 App 会话。同步会使手机 App 退出登录，完成后请回到手机 App 重新登录。";
       renderAuth(authMessage);
       return;
     }
@@ -458,7 +492,10 @@
     form.className = "yjb_optional_auth";
     form.setAttribute("aria-label", "App 短信登录");
 
-    var title = createCell("yjb_optional_auth_title", "验证 App 账号");
+    var title = createCell(
+      "yjb_optional_auth_title",
+      state.usingCache ? "重新同步自选" : "初始化自选",
+    );
     var status = createCell("yjb_optional_auth_status", message);
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
@@ -491,12 +528,28 @@
     var submitButton = document.createElement("button");
     submitButton.type = "submit";
     submitButton.className = "yjb_optional_auth_submit";
-    submitButton.textContent = "登录并加载";
+    submitButton.textContent = "登录并同步";
+
+    var actions = document.createElement("div");
+    actions.className = "yjb_optional_auth_actions";
+    actions.appendChild(submitButton);
+    if (state.usingCache && state.funds.length) {
+      var cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "yjb_optional_auth_cancel";
+      cancelButton.textContent = "取消";
+      cancelButton.addEventListener("click", function () {
+        state.forceRefresh = false;
+        renderGroups();
+        renderFunds();
+      });
+      actions.appendChild(cancelButton);
+    }
 
     form.appendChild(title);
     form.appendChild(phoneRow);
     form.appendChild(codeInput);
-    form.appendChild(submitButton);
+    form.appendChild(actions);
     form.appendChild(status);
     form.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -528,6 +581,7 @@
     if (!form || !form.isConnected) return;
     var sendButton = form.querySelector(".yjb_optional_auth_code_button");
     var submitButton = form.querySelector(".yjb_optional_auth_submit");
+    var cancelButton = form.querySelector(".yjb_optional_auth_cancel");
     var waiting = state.codeCountdown > 0;
     sendButton.disabled = state.authSending || state.authSubmitting || waiting;
     sendButton.textContent = state.authSending
@@ -536,7 +590,8 @@
         ? state.codeCountdown + " 秒"
         : "获取验证码";
     submitButton.disabled = state.authSending || state.authSubmitting;
-    submitButton.textContent = state.authSubmitting ? "登录中" : "登录并加载";
+    submitButton.textContent = state.authSubmitting ? "登录中" : "登录并同步";
+    if (cancelButton) cancelButton.disabled = state.authSending || state.authSubmitting;
   }
 
   function startCodeCountdown(form) {
@@ -619,12 +674,14 @@
           return;
         }
         state.authPhone = "";
-        state.groups = [];
-        state.funds = [];
+        if (!state.usingCache) {
+          state.groups = [];
+          state.funds = [];
+        }
         state.selectedGroup = "all";
         state.sort = "default";
         codeInput.value = "";
-        loadFunds("all", true);
+        loadFunds("all", true, true);
       })
       .catch(function (error) {
         setAuthStatus(status, error.message || "登录失败", true);
@@ -652,7 +709,11 @@
       action.className = "yjb_optional_state_action";
       action.textContent = actionText;
       action.addEventListener("click", function () {
-        loadFunds(state.selectedGroup, state.groups.length === 0);
+        loadFunds(
+          state.selectedGroup,
+          state.groups.length === 0,
+          state.forceRefresh,
+        );
       });
       container.appendChild(action);
     }
@@ -666,6 +727,18 @@
       String(date.getMinutes()).padStart(2, "0") +
       ":" +
       String(date.getSeconds()).padStart(2, "0")
+    );
+  }
+
+  function formatCacheTime(value) {
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return String(value || "");
+    return (
+      String(date.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(date.getDate()).padStart(2, "0") +
+      " " +
+      formatClock(date)
     );
   }
 

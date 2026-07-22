@@ -141,6 +141,14 @@ function sendMessage(message) {
         ],
       });
     }
+    if (call.url.endsWith("position/v1/option/group?group_id=1")) {
+      return apiResponse({
+        code: 200,
+        data: [
+          { fund_id: "1", code: "000001", nv_info: { gsz: "9.9999", gszzl: "" } },
+        ],
+      });
+    }
     throw new Error("Unexpected URL: " + call.url);
   };
   valuationHandler = async function () {
@@ -162,6 +170,8 @@ function sendMessage(message) {
   };
   var optionalFunds = await sendMessage({ type: "optionalFunds" });
   assert.equal(optionalFunds.ok, true);
+  assert.equal(optionalFunds.data.source, "cache");
+  assert.ok(optionalFunds.data.cachedAt);
   assert.deepEqual(optionalFunds.data.groups, [{ id: 1, title: "关注" }]);
   assert.deepEqual(valuationCalls, [["000001", "006327"]]);
   assert.deepEqual(optionalFunds.data.funds, [
@@ -169,7 +179,7 @@ function sendMessage(message) {
       fund_id: "1",
       code: "000001",
       nv_info: {
-        gsz: "9.9999",
+        gsz: "1.2345",
         gszzl: "1.26",
         dwjz: "1.2191",
         jzrq: "2026-07-21",
@@ -189,9 +199,17 @@ function sendMessage(message) {
       },
     },
   ]);
+  assert.equal(stored.appToken, undefined, "App token must be discarded after caching");
+  assert.equal(stored.appOptionalFundsCache.version, 1);
+  assert.deepEqual(
+    stored.appOptionalFundsCache.fundGroups.map(function (group) {
+      return group.id;
+    }),
+    ["all", "1"],
+  );
   fetchCalls.slice(3).forEach(function (call) {
     assert.equal(call.options.headers.Authorization, "android:app-session-token");
-    var path = call.url.replace("https://app-api.yangjibao.com/", "");
+    var path = call.url.replace("https://app-api.yangjibao.com/", "").split("?")[0];
     var timestamp = call.options.headers["Request-Time"];
     assert.equal(
       call.options.headers["Request-Sign"],
@@ -199,13 +217,59 @@ function sendMessage(message) {
     );
   });
 
+  var appFetchCount = fetchCalls.length;
+  valuationHandler = async function () {
+    return {
+      "000001": {
+        gsz: "1.2500",
+        gszzl: "2.10",
+        dwjz: "1.2191",
+        jzrq: "2026-07-21",
+        gztime: "2026-07-22 14:40",
+      },
+    };
+  };
+  var cachedGroup = await sendMessage({ type: "optionalFunds", groupId: 1 });
+  assert.equal(cachedGroup.ok, true);
+  assert.equal(cachedGroup.data.groups, null);
+  assert.equal(cachedGroup.data.funds.length, 1);
+  assert.equal(cachedGroup.data.funds[0].nv_info.gsz, "1.2500");
+  assert.equal(cachedGroup.data.funds[0].nv_info.gszzl, "2.10");
+  assert.equal(fetchCalls.length, appFetchCount, "cached groups must not call the App API");
+
+  var currentSyncedAt = stored.appOptionalFundsCache.syncedAt;
+  stored.appOptionalFundsCache.syncedAt = "2000-01-01T00:00:00.000Z";
+  valuationHandler = async function () {
+    return {};
+  };
+  var staleCache = await sendMessage({ type: "optionalFunds", groupId: 1 });
+  assert.equal(staleCache.ok, true);
+  assert.equal(
+    staleCache.data.funds[0].nv_info.gsz,
+    undefined,
+    "a previous-day estimate must not be displayed as today's estimate",
+  );
+  assert.equal(staleCache.data.funds[0].nv_info.gszzl, undefined);
+  stored.appOptionalFundsCache.syncedAt = currentSyncedAt;
+
+  stored.appToken = "expired-token";
   fetchHandler = function () {
     return apiResponse({ code: "1000", message: "token已失效，请重新登录" });
   };
-  var expired = await sendMessage({ type: "optionalFunds", groupId: 1 });
+  var expired = await sendMessage({
+    type: "optionalFunds",
+    groupId: 1,
+    forceRefresh: true,
+  });
   assert.equal(expired.ok, false);
   assert.equal(expired.error.authInvalid, true);
   assert.equal(stored.appToken, undefined);
+  assert.ok(stored.appOptionalFundsCache, "an expired token must not delete the cache");
+
+  var afterExpiryFetchCount = fetchCalls.length;
+  var cachedAfterExpiry = await sendMessage({ type: "optionalFunds", groupId: 1 });
+  assert.equal(cachedAfterExpiry.ok, true);
+  assert.equal(fetchCalls.length, afterExpiryFetchCount);
 
   console.log("app-api tests passed");
 })().catch(function (error) {

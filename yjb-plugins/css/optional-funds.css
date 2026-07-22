@@ -86,10 +86,12 @@
 
 .yjb_optional_group:focus-visible,
 .yjb_optional_sort:focus-visible,
+.yjb_optional_resync:focus-visible,
 .yjb_optional_state_action:focus-visible,
 .yjb_optional_auth_input:focus-visible,
 .yjb_optional_auth_code_button:focus-visible,
 .yjb_optional_auth_submit:focus-visible,
+.yjb_optional_auth_cancel:focus-visible,
 .yjb_optional_row:focus-visible {
   outline: 2px solid var(--yjb-accent);
   outline-offset: -2px;
@@ -105,6 +107,43 @@
   background: var(--yjb-surface-muted);
   color: var(--yjb-text-muted);
   font-size: 11px;
+}
+
+.yjb_optional_meta_actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.yjb_optional_updated {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yjb_optional_resync {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--yjb-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--yjb-text-secondary);
+  font-size: 11px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.yjb_optional_resync:hover {
+  border-color: var(--yjb-accent);
+  color: var(--yjb-accent);
+}
+
+.yjb_optional_resync:disabled,
+.yjb_optional_auth_cancel:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .yjb_optional_table {
@@ -340,7 +379,8 @@
 
 .yjb_optional_auth_input,
 .yjb_optional_auth_code_button,
-.yjb_optional_auth_submit {
+.yjb_optional_auth_submit,
+.yjb_optional_auth_cancel {
   height: 38px;
   box-sizing: border-box;
   border-radius: 4px;
@@ -374,7 +414,8 @@
 }
 
 .yjb_optional_auth_code_button,
-.yjb_optional_auth_submit {
+.yjb_optional_auth_submit,
+.yjb_optional_auth_cancel {
   padding: 0 14px;
   border: 1px solid var(--yjb-accent);
   cursor: pointer;
@@ -392,7 +433,26 @@
   font-weight: 600;
 }
 
+.yjb_optional_auth_actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+}
+
+.yjb_optional_auth_actions:has(.yjb_optional_auth_cancel) {
+  grid-template-columns: minmax(0, 1fr) 88px;
+}
+
+.yjb_optional_auth_cancel {
+  background: transparent;
+  color: var(--yjb-accent);
+}
+
 .yjb_optional_auth_code_button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--yjb-accent) 9%, transparent);
+}
+
+.yjb_optional_auth_cancel:hover {
   background: color-mix(in srgb, var(--yjb-accent) 9%, transparent);
 }
 
