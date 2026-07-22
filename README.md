@@ -41,9 +41,25 @@
 5. 插件使用该 `token` 请求账号列表、基金持仓、收益数据等接口。
 6. 持仓数据会结合公开基金估值或公开持仓行情补充实时估值，再计算界面和角标收益。
 
-浏览器扫码返回的 `token` 只用于持仓接口，不能请求 App 自选接口，也不会影响手机 App 登录。App 自选接口则与手机 App 共用服务端的单会话限制：在插件中通过短信登录会使手机 App 退出，手机 App 再次登录也会使该 App Token 失效。
+浏览器扫码返回的 `token` 只用于持仓接口，不能请求 App 自选接口，也不会影响手机 App 登录。自选基金采用单独的本地缓存策略，详见下一节。
 
-为避免插件和手机 App 反复互踢，插件只在首次初始化或用户主动点击“同步列表”时登录 App 接口。同步时会一次性保存全部分组及各分组基金，成功后立即从插件存储中删除 `appToken`。之后正常打开自选、切换分组或点击顶部刷新都只读取本地自选列表，并通过公开行情接口更新估算净值和当日涨幅，不再访问 App 自选接口。手机 App 中新增、删除或调整分组后，需要再次手动同步；同步会再次使手机 App 退出，完成后可回到手机 App 重新登录。手机号和验证码不会写入插件存储。
+## 自选基金同步策略
+
+养鸡宝 App 自选接口存在服务端单会话限制。在插件中通过短信登录会使手机 App 退出；手机 App 再次登录后，插件取得的 App Token 也会失效。插件无法在客户端绕过这一限制。
+
+为避免插件和手机 App 反复互踢，自选列表与基金行情分开更新：
+
+| 操作 | 自选列表来源 | 估算净值与当日涨幅 | 是否影响手机 App 登录 |
+| --- | --- | --- | --- |
+| 首次初始化自选 | App 接口完整同步 | 同步后使用公开行情补充 | 会，完成后需回手机 App 重新登录 |
+| 打开自选页面 | 本地缓存 | 重新请求公开行情 | 不会 |
+| 切换自选分组 | 本地缓存 | 重新请求公开行情 | 不会 |
+| 点击顶部刷新 | 本地缓存 | 重新请求公开行情 | 不会 |
+| 点击“同步列表” | App 接口完整同步 | 同步后使用公开行情补充 | 会，完成后需回手机 App 重新登录 |
+
+自选列表不会定时从 App 自动更新。手机 App 中新增、删除基金或调整分组后，需要在插件自选页面主动点击“同步列表”。同步会一次性获取全部分组和每个分组的基金，成功后写入 `chrome.storage.local` 的 `appOptionalFundsCache`，并立即删除插件本地保存的 `appToken`。手机号和短信验证码不会写入插件存储。
+
+正常打开页面、切换分组和刷新只读取本地列表，不再访问 App 自选接口。缓存中的盘中估值跨日后会被清除，再由公开行情重新补充，避免把历史估值误显示为今日数据。即使 App Token 已失效，已缓存的自选列表也会继续保留。
 
 App 自选相关接口：
 
@@ -116,20 +132,23 @@ GET /qr_code_state/{qrId}
 1. 打开 Chrome，进入 `chrome://extensions`。
 2. 打开右上角“开发者模式”。
 3. 点击“加载已解压的扩展程序”。
-4. 选择本项目目录。
+4. 选择仓库中的 `yjb-plugins` 目录。
 5. 点击浏览器工具栏中的插件图标使用。
 
 ## 项目结构
 
 ```text
 .
-├── assets/             # 插件图标与静态资源
-├── css/                # 样式文件
-├── Image/              # README 截图
-├── js/                 # 前端弹窗与后台打包脚本
-├── manifest.json       # Chrome 扩展配置
-├── popup.html          # 插件弹窗入口
-└── service-worker.js   # MV3 后台 Service Worker
+├── README.md
+├── tests/                       # App 接口与估值服务测试
+└── yjb-plugins/                 # Chrome 加载的扩展目录
+    ├── assets/                  # 插件图标与静态资源
+    ├── css/                     # 样式文件
+    ├── Image/                   # README 截图
+    ├── js/                      # 前端弹窗与后台脚本
+    ├── manifest.json            # Chrome 扩展配置
+    ├── popup.html               # 插件弹窗入口
+    └── service-worker.js        # MV3 后台 Service Worker
 ```
 
 ## 调试说明
@@ -139,9 +158,9 @@ GET /qr_code_state/{qrId}
 常用检查命令：
 
 ```bash
-node --check js/popup.js
-node --check js/background.js
-node --check service-worker.js
-node ../tests/app-api.test.js
-node ../tests/valuation-service.test.js
+node --check yjb-plugins/js/popup.js
+node --check yjb-plugins/js/background.js
+node --check yjb-plugins/service-worker.js
+node tests/app-api.test.js
+node tests/valuation-service.test.js
 ```
