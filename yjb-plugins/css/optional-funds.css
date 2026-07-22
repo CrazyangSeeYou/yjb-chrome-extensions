@@ -10,8 +10,15 @@
   flex-direction: column;
   background: var(--yjb-bg);
   color: var(--yjb-text);
-  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  letter-spacing: 0;
   overflow: hidden;
+}
+
+.yjb_optional_page button,
+.yjb_optional_page input {
+  font-family: inherit;
+  letter-spacing: 0;
 }
 
 .yjb_optional_page[hidden] {
@@ -232,7 +239,8 @@
 .yjb_optional_time {
   overflow: hidden;
   color: var(--yjb-text-muted);
-  font-family: "DIN Alternate", Consolas, monospace;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   line-height: 17px;
   text-overflow: ellipsis;
@@ -245,7 +253,8 @@
 
 .yjb_optional_nav,
 .yjb_optional_rate {
-  font-family: "DIN Alternate", Consolas, monospace;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
   font-size: 16px;
   font-weight: 600;
   line-height: 22px;

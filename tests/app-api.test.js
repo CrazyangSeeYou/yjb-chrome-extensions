@@ -6,6 +6,10 @@ var stored = { token: "browser-plugin-token" };
 var listeners = [];
 var fetchCalls = [];
 var fetchHandler = null;
+var valuationCalls = [];
+var valuationHandler = async function () {
+  return {};
+};
 
 global.self = global;
 global.chrome = {
@@ -40,6 +44,11 @@ global.fetch = async function (url, options) {
   var call = { url: url, options: options };
   fetchCalls.push(call);
   return fetchHandler(call);
+};
+
+global.__fetchAllValuations = async function (codes) {
+  valuationCalls.push(codes);
+  return valuationHandler(codes);
 };
 
 require("../yjb-plugins/js/app-api.js");
@@ -122,14 +131,42 @@ function sendMessage(message) {
       return apiResponse({ code: 200, data: [{ id: 1, title: "关注" }] });
     }
     if (call.url.endsWith("position/v1/option/all")) {
-      return apiResponse({ code: 200, data: [{ fund_id: "000001" }] });
+      return apiResponse({
+        code: 200,
+        data: [{ fund_id: "1", nv_info: { gsz: "9.9999", gszzl: "" } }],
+      });
     }
     throw new Error("Unexpected URL: " + call.url);
+  };
+  valuationHandler = async function () {
+    return {
+      "000001": {
+        gsz: "1.2345",
+        gszzl: "1.26",
+        dwjz: "1.2191",
+        jzrq: "2026-07-21",
+        gztime: "2026-07-22 14:30",
+      },
+    };
   };
   var optionalFunds = await sendMessage({ type: "optionalFunds" });
   assert.equal(optionalFunds.ok, true);
   assert.deepEqual(optionalFunds.data.groups, [{ id: 1, title: "关注" }]);
-  assert.deepEqual(optionalFunds.data.funds, [{ fund_id: "000001" }]);
+  assert.deepEqual(valuationCalls, [["000001"]]);
+  assert.deepEqual(optionalFunds.data.funds, [
+    {
+      fund_id: "1",
+      nv_info: {
+        gsz: "9.9999",
+        gszzl: "1.26",
+        dwjz: "1.2191",
+        jzrq: "2026-07-21",
+        gztime: "2026-07-22 14:30",
+        qjgzrq: "2026-07-22 14:30",
+        zxjzrq: "2026-07-21",
+      },
+    },
+  ]);
   fetchCalls.slice(3).forEach(function (call) {
     assert.equal(call.options.headers.Authorization, "android:app-session-token");
     var path = call.url.replace("https://app-api.yangjibao.com/", "");

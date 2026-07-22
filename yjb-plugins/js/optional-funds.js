@@ -278,7 +278,16 @@
 
   function getRate(fund) {
     var info = (fund && fund.nv_info) || {};
-    return getFirstNumber(info, ["gszzl", "zsgzzl", "vgszzl"]);
+    var rate = getFirstNumber(info, ["gszzl", "zsgzzl", "vgszzl"]);
+    if (rate !== null) return rate;
+    return getFirstNumber(fund, [
+      "gszzl",
+      "zsgzzl",
+      "vgszzl",
+      "increase_rate",
+      "day_increase_rate",
+      "estimate_rate",
+    ]);
   }
 
   function sortedFunds() {

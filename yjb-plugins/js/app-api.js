@@ -258,6 +258,55 @@
     return [];
   }
 
+  function getFundCode(fund) {
+    var value = fund && (fund.fund_id || fund.code || fund.fund_code);
+    var code = String(value === undefined || value === null ? "" : value).trim();
+    return /^\d{1,6}$/.test(code) ? code.padStart(6, "0") : "";
+  }
+
+  function hasValuationValue(value) {
+    if (value === undefined || value === null) return false;
+    var normalized = String(value).trim();
+    return normalized !== "" && normalized !== "-" && normalized !== "--";
+  }
+
+  function fillValuationValue(target, key, value) {
+    if (!hasValuationValue(target[key]) && hasValuationValue(value)) {
+      target[key] = value;
+    }
+  }
+
+  async function enrichFundsWithValuations(funds) {
+    if (!Array.isArray(funds) || !funds.length) return funds;
+    if (typeof self.__fetchAllValuations !== "function") return funds;
+
+    var codes = funds.map(getFundCode).filter(Boolean);
+    if (!codes.length) return funds;
+
+    try {
+      var valuations = await self.__fetchAllValuations(codes);
+      funds.forEach(function (fund) {
+        var code = getFundCode(fund);
+        var valuation = code && valuations && valuations[code];
+        if (!valuation) return;
+
+        var info = fund.nv_info && typeof fund.nv_info === "object"
+          ? fund.nv_info
+          : (fund.nv_info = {});
+        fillValuationValue(info, "gsz", valuation.gsz);
+        fillValuationValue(info, "gszzl", valuation.gszzl);
+        fillValuationValue(info, "dwjz", valuation.dwjz);
+        fillValuationValue(info, "jzrq", valuation.jzrq);
+        fillValuationValue(info, "gztime", valuation.gztime);
+        fillValuationValue(info, "qjgzrq", valuation.gztime);
+        fillValuationValue(info, "zxjzrq", valuation.jzrq);
+      });
+    } catch (error) {
+      // 自选接口数据仍可展示，实时估值失败时保留原始字段。
+    }
+    return funds;
+  }
+
   async function loadWithToken(groupId, token) {
     var hasGroup =
       groupId !== undefined && groupId !== null && String(groupId) !== "all";
@@ -268,14 +317,17 @@
         token,
         { query: "?group_id=" + encodeURIComponent(String(groupId)) },
       );
-      return { groups: null, funds: toList(groupData) };
+      return { groups: null, funds: await enrichFundsWithValuations(toList(groupData)) };
     }
 
     var result = await Promise.all([
       request("users/v1/fund-group", token),
       request("position/v1/option/all", token),
     ]);
-    return { groups: toList(result[0]), funds: toList(result[1]) };
+    return {
+      groups: toList(result[0]),
+      funds: await enrichFundsWithValuations(toList(result[1])),
+    };
   }
 
   async function loadOptionalFunds(groupId) {
